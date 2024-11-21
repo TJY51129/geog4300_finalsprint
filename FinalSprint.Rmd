@@ -1,0 +1,183 @@
+---
+title: "code"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-11-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(sf) # For spatial data if using maps
+```
+
+## Research Question
+
+This study investigates how stress from price changes (PRICESTRESS) varies across different demographic groups, specifically focusing on age, race, and marital status.
+
+## Methods and Data
+
+The analysis uses the 2023 Household Pulse Survey dataset, which includes responses from individuals across the U.S. The variable PRICESTRESS indicates stress levels from price changes, with higher values indicating more stress. Demographic variables used in this analysis include:
+
+- Age: Categorized into age groups (e.g., 18-29, 30-44, 45-64, 65+).
+- Race: Self-reported racial categories.
+- Marital Status: Categories like married, single, widowed, etc.
+- Weights (PWEIGHT) were applied to ensure representativeness. Descriptive and inferential statistics, along with visualizations, were used to identify and quantify differences.
+```{r}
+files <- list.files("data", recursive = TRUE, full.names = TRUE, pattern = "puf")
+pulse <- map_df(files, read_csv)
+
+# Prepare relevant variables
+pulse_clean <- pulse %>%
+  select(PRICESTRESS, TBIRTH_YEAR, RRACE, MS, PWEIGHT, EST_ST, REGION) %>%
+  filter(!is.na(PRICESTRESS), !is.na(TBIRTH_YEAR), !is.na(RRACE), !is.na(MS))
+```
+
+## Analysis
+### Descriptive Statistics
+```{r}
+# Create AGE and age_group variables
+pulse_data <- pulse_clean %>%
+  mutate(
+    AGE = 2024 - TBIRTH_YEAR, # Calculate AGE from TBIRTH_YEAR
+    age_group = case_when(
+      AGE < 30 ~ "18-29",
+      AGE < 45 ~ "30-44",
+      AGE < 65 ~ "45-64",
+      TRUE ~ "65+"
+    )
+  )
+
+# Map RRACE (race) and MS (marital status) to meaningful labels
+pulse_data <- pulse_data %>%
+  mutate(
+    RRACE = case_when(
+      RRACE == 1 ~ "White, Alone",
+      RRACE == 2 ~ "Black, Alone",
+      RRACE == 3 ~ "Asian, Alone",
+      RRACE == 4 ~ "Other Race/Combination",
+      TRUE ~ "Unknown" # For any unexpected value
+    ),
+    MS = case_when(
+      MS == 1 ~ "Now married",
+      MS == 2 ~ "Widowed",
+      MS == 3 ~ "Divorced",
+      MS == 4 ~ "Separated",
+      MS == 5 ~ "Never married",
+      MS == -99 ~ "Not selected",
+      MS == -88 ~ "Missing/Not reported",
+      TRUE ~ "Unknown" # For any unexpected value
+    )
+  )
+
+pulse_data <- pulse_data %>%
+  filter(!PRICESTRESS %in% c(-99, -88))
+```
+
+## Histogram for numeric variables
+```{r}
+# Select numeric columns from pulse_data
+numeric_pulse_data <- pulse_clean %>%
+  select(where(is.numeric)) # Select only numeric columns
+
+# Pivot the data to a long format for plotting
+pulse_long <- numeric_pulse_data %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+
+# Plot histograms for all variables using facets
+ggplot(pulse_long, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "blue", color = "black", alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free", ncol = 4) +
+  theme_minimal() +
+  labs(
+    title = "Histograms of All Numeric Variables in pulse_data",
+    x = "Value",
+    y = "Frequency"
+  )
+```
+
+
+```{r}
+# Group data by age group
+age_count_st <- pulse_data %>%
+  group_by(age_group, EST_ST, REGION) %>%
+  summarise(count=sum(PWEIGHT)) %>%
+  ungroup() %>%
+  mutate(REGION = as.character(REGION)) # Ensure REGION is a character
+
+# Display the results
+age_count_st
+
+# Plot stress levels by age group across states
+ggplot(age_count_st, aes(x = count,
+                         y = reorder(EST_ST, count),
+                         fill = REGION)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ age_group, scales = "free") +
+  xlab("Total Count of Weighted Responses") +
+  ylab("State FIPS") +
+  ggtitle("Weighted Response Counts by Age Group, State, and Region") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3", name = "Region")
+
+```
+
+### Inferential Statistics
+We conduct an ANOVA test to examine whether differences in stress levels are statistically significant across age groups, racial groups, and marital statuses.
+```{r}
+# ANOVA for age group
+anova_age <- aov(PRICESTRESS ~ age_group, data = pulse_data)
+summary(anova_age)
+
+# ANOVA for race
+anova_race <- aov(PRICESTRESS ~ RRACE, data = pulse_data)
+summary(anova_race)
+
+# ANOVA for marital status
+anova_ms <- aov(PRICESTRESS ~ MS, data = pulse_data)
+summary(anova_ms)
+
+```
+# Univariate Model
+```{r}
+pulse_clean <- pulse_clean %>%
+  mutate(
+    AGE = 2024 - TBIRTH_YEAR, # Calculate AGE from TBIRTH_YEAR
+    age_group = case_when(
+      AGE < 30 ~ "18-29",
+      AGE < 45 ~ "30-44",
+      AGE < 65 ~ "45-64",
+      TRUE ~ "65+"
+    )
+  )
+
+# Create univariate models for each predictor
+model_age <- lm(PRICESTRESS ~ age_group, data = pulse_clean)
+model_race <- lm(PRICESTRESS ~ RRACE, data = pulse_clean)
+model_marital <- lm(PRICESTRESS ~ MS, data = pulse_clean)
+model_region <- lm(PRICESTRESS ~ REGION, data = pulse_clean)
+
+# Display summaries for each model
+summary(model_age)   # Effect of age group on stress levels
+summary(model_race)  # Effect of race on stress levels
+summary(model_marital) # Effect of marital status on stress levels
+summary(model_region) # Effect of region on stress levels
+
+```
+
+
+
+# Multivariate Model
+```{r}
+# Linear regression model
+stress_model <- lm(
+  PRICESTRESS ~ age_group + RRACE + MS + REGION,
+  data = pulse_clean
+)
+
+# Summary of the model
+summary(stress_model)
+```
+
